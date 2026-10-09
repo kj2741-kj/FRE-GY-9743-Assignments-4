@@ -107,22 +107,57 @@ class Interpolator1DPCP(Interpolator1D):
                          extrapolation_method)
         assert self.extrap_method_ == ExtrapMethod.FLAT
 
+    def _bucket_index(self, x: float) -> int:
+        # Leftmost knot index j with axis1[j] >= x, clamped to the last index.
+        # For axis1=[1,3,5,7]: x in (x_i, x_{i+1}] -> j=i+1 (left-continuous
+        # step); x <= axis1[0] -> j=0; x > axis1[-1] -> j clamped to N-1.
+        # One rule covers the interior step and both flat wings.
+        j = np.searchsorted(self.axis1_, x, side='left')
+        return int(min(j, self.length_ - 1))
+
     def interpolate(self, x: float) -> float:
-        #TODO
-        pass
+        return float(self.values_[self._bucket_index(x)])
 
     def integrate(self, start_x: float, end_x: float) -> float:
-        #TODO
-        pass
+        if start_x > end_x:
+            return -self.integrate(end_x, start_x)
+        if start_x == end_x:
+            return 0.0
+
+        # Insert every knot strictly inside (start_x, end_x) as a breakpoint.
+        # Between consecutive breakpoints a < b there is no knot in (a, b),
+        # so f is constant on (a, b] and equal to f(b) there (left-continuity).
+        interior_knots = self.axis1_[(self.axis1_ > start_x) & (self.axis1_ < end_x)]
+        breakpoints = np.concatenate(([start_x], interior_knots, [end_x]))
+
+        total = 0.0
+        for a, b in zip(breakpoints[:-1], breakpoints[1:]):
+            total += self.interpolate(b) * (b - a)
+        return total
 
     def gradient_wrt_ordinate(self, x: float) -> np.ndarray:
-        #TODO
-        pass
+        grad = np.zeros(self.length_)
+        grad[self._bucket_index(x)] = 1.0
+        return grad
 
     def gradient_of_integrated_value_wrt_ordinate(self, start_x: float, end_x: float) -> np.ndarray:
-        #TODO
-        pass
+        if start_x > end_x:
+            return -self.gradient_of_integrated_value_wrt_ordinate(end_x, start_x)
 
+        grad = np.zeros(self.length_)
+        if start_x == end_x:
+            return grad
+
+        # Same breakpoint decomposition as integrate(): the integral is
+        # linear in values, so accumulate each segment's width into the
+        # ordinate index that is active on that segment.
+        interior_knots = self.axis1_[(self.axis1_ > start_x) & (self.axis1_ < end_x)]
+        breakpoints = np.concatenate(([start_x], interior_knots, [end_x]))
+
+        for a, b in zip(breakpoints[:-1], breakpoints[1:]):
+            j = self._bucket_index(b)
+            grad[j] += (b - a)
+        return grad
 
 
 class InterpolatorFactory:
